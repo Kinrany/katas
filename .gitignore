@@ -11,3 +11,6 @@
 # dotnet
 **/dotnet/bin/
 **/dotnet/obj/
+
+# clojure
+**/clojure/.cpcache/

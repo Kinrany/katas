@@ -23,3 +23,9 @@ Programming exercises
 2. Open project: `cd kataXX_exercise_name/dotnet`
 3. Run: `dotnet run`
 4. Format: [`dotnet format`](https://github.com/dotnet/format#how-to-install)
+
+### Clojure
+
+1. Install [`clj`](https://clojure.org/guides/getting_started)
+2. Open project: `cd kataXX_exercise_name/clojure`
+3. Run: `clj -X main/main`

@@ -1,8 +1,0 @@
-{
-  "scripts": {
-    "start": "deno main.ts"
-  },
-  "devDependencies": {
-    "typescript": "^4.0.5"
-  }
-}

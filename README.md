@@ -15,7 +15,7 @@ Programming exercises
 
 1. [Install `deno`](https://deno.land/)
 2. Open project: `cd kataXX_exercise_name/deno`
-3. Run: `npm start`
+3. Run: `deno run main.ts`
 
 ### .Net Core
 

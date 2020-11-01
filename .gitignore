@@ -1,0 +1,8 @@
+# rust
+**/rust/debug/
+**/rust/target/
+**/rust/Cargo.lock
+**/rust/**/*.rs.bk
+
+# deno
+**/deno/node_modules/

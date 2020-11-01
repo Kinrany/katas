@@ -7,3 +7,7 @@
 # deno
 **/deno/node_modules/
 **/deno/pnpm-lock.yaml
+
+# dotnet
+**/dotnet/bin/
+**/dotnet/obj/

@@ -1,0 +1,2 @@
+# katas
+Programming exercises

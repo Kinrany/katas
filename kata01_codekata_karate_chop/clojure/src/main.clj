@@ -16,5 +16,13 @@
               (reset! left center)))))
     @left))
 
+(defn chop_recursive [x, arr]
+  (if (= (count arr) 1) 0
+    (let [center (/ (+ 0 (count arr)) 2)]
+      (case (compare (nth arr center) x)
+        -1 (+ center (chop_recursive x (subvec arr center)))
+        1 (chop_recursive x (subvec arr 0 center))
+        0 center))))
+
 (defn main [opts]
-  (printf "chop(5, [1, 3, 5, 7]): %s%n" (chop 5 [1 3 5 7])))
+  (printf "chop(5, [1, 3, 5, 7]): %s%n" (chop_recursive 5 [1 3 5 7])))

@@ -16,17 +16,14 @@ struct Day {
 impl Day {
   fn parse(line: &str) -> Option<Self> {
     let parts = line.split_whitespace().collect::<Vec<_>>();
-    let day_number = parts.get(0).and_then(|&s| s.parse::<u32>().ok());
-    let max_temperature = parts.get(1).and_then(|&s| s.parse::<u32>().ok());
-    let min_temperature = parts.get(2).and_then(|&s| s.parse::<u32>().ok());
-    match (day_number, max_temperature, min_temperature) {
-      (Some(day_number), Some(max_temperature), Some(min_temperature)) => Some(Self {
-        day_number,
-        max_temperature,
-        min_temperature,
-      }),
-      _ => None,
-    }
+    let day_number = parts.get(0).and_then(|&s| s.parse::<u32>().ok())?;
+    let max_temperature = parts.get(1).and_then(|&s| s.parse::<u32>().ok())?;
+    let min_temperature = parts.get(2).and_then(|&s| s.parse::<u32>().ok())?;
+    Some(Self {
+      day_number,
+      max_temperature,
+      min_temperature,
+    })
   }
 
   fn temperature_spread(&self) -> u32 {

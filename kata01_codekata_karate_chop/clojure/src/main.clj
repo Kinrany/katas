@@ -24,5 +24,4 @@
         1 (chop_recursive x (subvec arr 0 center))
         0 center))))
 
-(defn main [opts]
-  (printf "chop(5, [1, 3, 5, 7]): %s%n" (chop_recursive 5 [1 3 5 7])))
+(printf "chop(5, [1, 3, 5, 7]): %s%n" (chop_recursive 5 [1 3 5 7]))

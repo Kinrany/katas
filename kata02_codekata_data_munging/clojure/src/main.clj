@@ -30,8 +30,7 @@
   (remove nil?)))
 (def day_with_smallest_spread (apply min-key temperature_spread days))
 
-(defn main [opts]
-  (let [day day_with_smallest_spread]
-    (printf "Day %s has the smallest temperature spread of %s.%n"
-      (day :day_number)
-      (temperature_spread day))))
+(let [day day_with_smallest_spread]
+  (printf "Day %s has the smallest temperature spread of %s.%n"
+    (day :day_number)
+    (temperature_spread day)))

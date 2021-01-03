@@ -8,4 +8,4 @@ edition = "2018"
 
 [dependencies]
 failure = "0.1.8"
-headless_chrome = "0.9.0"
+headless_chrome = { version = "0.9.0", default-features = false }

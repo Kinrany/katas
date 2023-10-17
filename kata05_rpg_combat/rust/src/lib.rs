@@ -1,4 +1,6 @@
-use std::num::NonZeroU32;
+use std::{collections::BTreeSet, num::NonZeroU32};
+
+use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Level(pub NonZeroU32);
@@ -30,27 +32,32 @@ impl Default for Level {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Character {
+    id: Uuid,
     /// Invariant: must not be higher than max health allowed by the level.
     health: u32,
     pub level: Level,
+    pub factions: BTreeSet<&'static str>,
 }
 
 impl Character {
     pub fn new() -> Self {
         let level = Level::one();
         Self {
+            id: Uuid::new_v4(),
             health: level.max_health(),
             level,
+            factions: BTreeSet::new(),
         }
     }
 
-    pub fn new_dead() -> Self {
-        Self {
-            health: 0,
-            level: Level::one(),
-        }
+    pub fn same_character(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+
+    pub fn is_ally(&self, other: &Self) -> bool {
+        self.factions.intersection(&other.factions).next().is_some()
     }
 
     pub fn health(&self) -> u32 {
@@ -69,10 +76,13 @@ impl Character {
         self.health > 0
     }
 
-    /// Returns `true` if the character is still alive.
-    pub fn take_damage(&mut self, damage: u32) -> bool {
+    pub fn take_damage(&mut self, damage: u32) {
         self.health = self.health.saturating_sub(damage);
-        self.alive()
+    }
+
+    /// Gain the given amount of health, up to the maximum.
+    pub fn gain_health(&mut self, amount: u32) {
+        self.set_health(self.health + amount);
     }
 }
 
@@ -82,37 +92,66 @@ impl Default for Character {
     }
 }
 
-/// Heal self by the given amount up to maximum.
+/// Heal target by the given amount up to maximum.
 ///
-/// Cannot be used when dead.
-pub fn heal_self(c: &mut Character, amount: u32) -> Result<(), DeadCannotHealSelf> {
-    if c.alive() {
-        c.set_health(c.health + amount);
-        Ok(())
-    } else {
-        Err(DeadCannotHealSelf)
+/// Cannot be used by dead characters.
+///
+/// Can only target self and allies.
+pub fn heal(c: &Character, target: &mut Character, amount: u32) -> Result<(), CannotHeal> {
+    if !c.alive() {
+        return Err(CannotHeal::Dead);
+    } else if !(c.same_character(target) || c.is_ally(target)) {
+        return Err(CannotHeal::NotSelfOrAlly);
     }
+
+    target.gain_health(amount);
+    Ok(())
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct DeadCannotHealSelf;
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum CannotHeal {
+    #[error("cannot heal while dead")]
+    Dead,
+    #[error("can only heal self or allies")]
+    NotSelfOrAlly,
+}
 
 /// Attacker deals damage to defender.
 ///
-/// Mutable references prevent characters from attacking themselves.
-pub fn deal_damage(attacker: &mut Character, defender: &mut Character, mut damage: u32) {
-    let level_difference = attacker.level.0.get() as i32 - defender.level.0.get() as i32;
+/// Cannot damage self or members of the same faction.
+///
+/// Returns the amount of damage dealt.
+pub fn deal_damage(
+    atk: &Character,
+    def: &mut Character,
+    mut damage: u32,
+) -> Result<(), CannotDamage> {
+    if atk.same_character(def) {
+        return Err(CannotDamage::SameCharacter);
+    } else if atk.is_ally(def) {
+        return Err(CannotDamage::SameFaction);
+    }
+
+    let level_difference = atk.level.0.get() as i32 - def.level.0.get() as i32;
     if level_difference >= 5 {
         damage += damage / 2;
     } else if level_difference <= -5 {
         damage /= 2;
     }
 
-    defender.take_damage(damage);
+    def.take_damage(damage);
+    Ok(())
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum CannotDamage {
+    #[error("cannot damage self")]
+    SameCharacter,
+    #[error("cannot damage members of shared faction")]
+    SameFaction,
 }
 
 #[cfg(test)]
-
 mod damage_and_health {
     use super::*;
 
@@ -132,27 +171,27 @@ mod damage_and_health {
     fn character_with_no_health_is_dead() {
         let c = Character {
             health: 0,
-            ..Default::default()
+            ..Character::new()
         };
         assert!(!c.alive());
     }
 
     #[test]
     fn dealt_damage_is_subtracted_from_health() {
-        let mut attacker = Character::new();
-        let mut defender = Character {
+        let atk = Character::new();
+        let mut def = Character {
             health: 500,
-            ..Default::default()
+            ..Character::new()
         };
-        deal_damage(&mut attacker, &mut defender, 100);
-        assert_eq!(defender.health, 400);
+        deal_damage(&atk, &mut def, 100).expect("can deal damage");
+        assert_eq!(def.health, 400);
     }
 
     #[test]
-    fn when_received_damage_exceeds_health_character_dies() {
+    fn when_received_damage_exceeds_health_then_character_dies() {
         let mut c = Character {
             health: 100,
-            ..Default::default()
+            ..Character::new()
         };
         c.take_damage(200);
         assert!(!c.alive());
@@ -160,28 +199,40 @@ mod damage_and_health {
     }
 
     #[test]
+    fn cannot_deal_damage_to_self() {
+        let atk = Character::new();
+        let mut def = atk.clone();
+        assert_eq!(
+            deal_damage(&atk, &mut def, 1),
+            Err(CannotDamage::SameCharacter)
+        );
+    }
+
+    #[test]
     fn new_character_dies_after_max_health_damage() {
-        let mut character = Character::new();
-        character.take_damage(character.level.max_health());
-        assert!(!character.alive());
+        let mut c = Character::new();
+        c.take_damage(c.level.max_health());
+        assert!(!c.alive());
     }
 
     #[test]
     fn alive_character_can_self_heal() {
-        let mut character = Character {
+        let mut c = Character {
             health: 100,
-            ..Default::default()
+            ..Character::new()
         };
-        assert!(character.health < character.level.max_health());
+        assert!(c.health < c.level.max_health());
 
-        heal_self(&mut character, 10).expect("should succeed for non-dead");
-        assert_eq!(character.health, 110);
+        heal(&c.clone(), &mut c, 10).expect("should succeed for non-dead");
+        assert_eq!(c.health, 110);
     }
 
     #[test]
-    fn dead_cannot_self_heal() {
-        let mut character = Character::new_dead();
-        assert_eq!(heal_self(&mut character, 1), Err(DeadCannotHealSelf));
+    fn dead_cannot_heal_self() {
+        let mut c = Character::new();
+        c.set_health(0);
+        assert!(!c.alive());
+        assert_eq!(heal(&c.clone(), &mut c, 1), Err(CannotHeal::Dead));
     }
 }
 
@@ -196,11 +247,11 @@ mod levels {
     }
 
     #[test]
-    fn level_1_to_5_characters_cannot_heal_over_1000() {
+    fn level_1_to_5_cannot_heal_over_1000() {
         let mut c1 = Character::new();
         let mut c5 = Character {
             level: Level::new(5),
-            ..Default::default()
+            ..Character::new()
         };
         c1.set_health(2000);
         c5.set_health(2000);
@@ -209,14 +260,14 @@ mod levels {
     }
 
     #[test]
-    fn level_6_plus_characters_cannot_heal_over_1500() {
+    fn level_6_plus_cannot_heal_over_1500() {
         let mut c6 = Character {
             level: Level::new(6),
-            ..Default::default()
+            ..Character::new()
         };
         let mut c100 = Character {
             level: Level::new(100),
-            ..Default::default()
+            ..Character::new()
         };
         c6.set_health(2000);
         c100.set_health(2000);
@@ -226,33 +277,95 @@ mod levels {
 
     #[test]
     fn attacking_plus_5_level_deals_half_damage() {
-        let mut attacker = Character {
-            level: Level::one(),
-            ..Default::default()
-        };
-        let mut defender = Character {
+        let atk = Character::new();
+        let mut def = Character {
             level: Level::new(6),
-            health: 500,
+            ..Character::new()
         };
-        assert!(attacker.level.0.get() + 5 <= defender.level.0.get());
+        assert!(atk.level.0.get() + 5 <= def.level.0.get());
 
-        deal_damage(&mut attacker, &mut defender, 20);
-        assert_eq!(defender.health, 490);
+        def.set_health(500);
+        deal_damage(&atk, &mut def, 20).expect("can deal damage");
+        assert_eq!(def.health, 490);
     }
 
     #[test]
     fn attacking_minus_5_level_deals_extra_damage() {
-        let mut attacker = Character {
+        let atk = Character {
             level: Level::new(6),
-            ..Default::default()
+            ..Character::new()
         };
-        let mut defender = Character {
+        let mut def = Character {
             level: Level::one(),
-            health: 500,
+            ..Character::new()
         };
-        assert!(attacker.level.0.get() >= 5 + defender.level.0.get());
+        assert!(atk.level.0.get() >= 5 + def.level.0.get());
 
-        deal_damage(&mut attacker, &mut defender, 20);
-        assert_eq!(defender.health, 470);
+        def.set_health(500);
+        deal_damage(&atk, &mut def, 20).expect("can deal damage");
+        assert_eq!(def.health, 470);
+    }
+}
+
+#[cfg(test)]
+mod factions {
+    use super::*;
+
+    fn red_pandas() -> (Character, Character) {
+        let c1 = Character {
+            factions: ["red pandas", "blue chinchillas"].into(),
+            ..Character::new()
+        };
+        let c2 = Character {
+            factions: ["red pandas", "turquoise leprechauns"].into(),
+            ..Character::new()
+        };
+        (c1, c2)
+    }
+
+    #[test]
+    fn new_character_has_no_faction() {
+        let c = Character::new();
+        assert!(c.factions.is_empty());
+    }
+
+    #[test]
+    fn can_join_and_leave_factions() {
+        let mut c = Character::new();
+        c.factions.insert("red pandas");
+        c.factions.remove("red pandas");
+    }
+
+    #[test]
+    fn same_faction_means_are_allies() {
+        let (c1, c2) = red_pandas();
+        assert!(c1.is_ally(&c2));
+    }
+
+    #[test]
+    fn cannot_deal_damage_to_allies() {
+        let (c1, mut c2) = red_pandas();
+        assert!(c1.is_ally(&c2));
+        assert_eq!(deal_damage(&c1, &mut c2, 1), Err(CannotDamage::SameFaction));
+    }
+
+    #[test]
+    fn can_heal_allies() {
+        let (c1, mut c2) = red_pandas();
+        assert_eq!(heal(&c1, &mut c2, 10), Ok(()));
+    }
+
+    #[test]
+    fn dead_cannot_heal_allies() {
+        let (mut c1, mut c2) = red_pandas();
+        c1.set_health(0);
+        assert_eq!(heal(&c1, &mut c2, 10), Err(CannotHeal::Dead));
+    }
+
+    #[test]
+    fn can_only_heal_allies() {
+        let (c1, mut c2) = red_pandas();
+        c2.factions.remove("red pandas");
+        assert_eq!(heal(&c1, &mut c2, 10), Err(CannotHeal::NotSelfOrAlly));
     }
 }

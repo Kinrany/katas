@@ -1,0 +1,7 @@
+[package]
+name = "kata05_rpg_combat"
+version = "0.1.0"
+authors = ["Ruslan Fadeev <github@kinrany.dev>"]
+edition = "2021"
+
+[dependencies]

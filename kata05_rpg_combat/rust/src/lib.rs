@@ -32,6 +32,20 @@ impl Default for Level {
     }
 }
 
+pub trait Health {
+    fn health(&self) -> u32;
+    fn max_health(&self) -> u32;
+    fn is_alive(&self) -> bool {
+        self.health() > 0
+    }
+    fn is_at_full_health(&self) -> bool {
+        self.health() == self.max_health()
+    }
+    fn can_heal_amount(&self) -> u32 {
+        self.max_health() - self.health()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Character {
     id: Uuid,
@@ -60,24 +74,14 @@ impl Character {
         self.factions.intersection(&other.factions).next().is_some()
     }
 
-    pub fn health(&self) -> u32 {
-        self.health
-    }
-
     /// Sets health to the given value, capped at maximum health.
-    ///
-    /// Returns the new health value.
-    pub fn set_health(&mut self, health: u32) -> u32 {
+    pub fn set_health(&mut self, health: u32) {
         self.health = u32::min(self.level.max_health(), health);
-        self.health
     }
 
-    pub fn alive(&self) -> bool {
-        self.health > 0
-    }
-
+    /// Take the given amount of damage. Health cannot go negative.
     pub fn take_damage(&mut self, damage: u32) {
-        self.health = self.health.saturating_sub(damage);
+        self.set_health(self.health.saturating_sub(damage));
     }
 
     /// Gain the given amount of health, up to the maximum.
@@ -92,16 +96,27 @@ impl Default for Character {
     }
 }
 
+impl Health for Character {
+    fn health(&self) -> u32 {
+        self.health
+    }
+    fn max_health(&self) -> u32 {
+        self.level.max_health()
+    }
+}
+
 /// Heal target by the given amount up to maximum.
 ///
 /// Cannot be used by dead characters.
 ///
 /// Can only target self and allies.
 pub fn heal(c: &Character, target: &mut Character, amount: u32) -> Result<(), CannotHeal> {
-    if !c.alive() {
+    if !c.is_alive() {
         return Err(CannotHeal::Dead);
     } else if !(c.same_character(target) || c.is_ally(target)) {
         return Err(CannotHeal::NotSelfOrAlly);
+    } else if target.is_at_full_health() {
+        return Err(CannotHeal::FullHealth);
     }
 
     target.gain_health(amount);
@@ -114,6 +129,10 @@ pub enum CannotHeal {
     Dead,
     #[error("can only heal self or allies")]
     NotSelfOrAlly,
+    #[error("destroyed object cannot heal")]
+    Destroyed,
+    #[error("cannot heal a target that is at full health")]
+    FullHealth,
 }
 
 /// Attacker deals damage to defender.
@@ -121,23 +140,23 @@ pub enum CannotHeal {
 /// Cannot damage self or members of the same faction.
 ///
 /// Returns the amount of damage dealt.
-pub fn deal_damage(
-    atk: &Character,
-    def: &mut Character,
-    mut damage: u32,
-) -> Result<(), CannotDamage> {
+pub fn deal_damage(atk: &Character, def: &mut Character, damage: u32) -> Result<(), CannotDamage> {
     if atk.same_character(def) {
         return Err(CannotDamage::SameCharacter);
     } else if atk.is_ally(def) {
         return Err(CannotDamage::SameFaction);
+    } else if !def.is_alive() {
+        return Err(CannotDamage::DeadTarget);
     }
 
     let level_difference = atk.level.0.get() as i32 - def.level.0.get() as i32;
-    if level_difference >= 5 {
-        damage += damage / 2;
+    let damage = if level_difference >= 5 {
+        damage * 3 / 2
     } else if level_difference <= -5 {
-        damage /= 2;
-    }
+        damage / 2
+    } else {
+        damage
+    };
 
     def.take_damage(damage);
     Ok(())
@@ -149,6 +168,80 @@ pub enum CannotDamage {
     SameCharacter,
     #[error("cannot damage members of shared faction")]
     SameFaction,
+    #[error("cannot use destroyed object to attack")]
+    Destroyed,
+    #[error("cannot damage dead target")]
+    DeadTarget,
+}
+
+pub struct Object {
+    max_health: u32,
+    health: u32,
+}
+
+impl Object {
+    pub fn new(max_health: u32) -> Self {
+        Self {
+            max_health,
+            health: max_health,
+        }
+    }
+}
+
+impl Health for Object {
+    fn health(&self) -> u32 {
+        self.health
+    }
+    fn max_health(&self) -> u32 {
+        self.max_health
+    }
+}
+
+pub struct HealthPotion(Object);
+
+impl HealthPotion {
+    pub fn new(max_health: u32) -> Self {
+        Self(Object::new(max_health))
+    }
+
+    pub fn heal(&mut self, target: &mut Character, amount: u32) -> Result<(), CannotHeal> {
+        if !self.0.is_alive() {
+            return Err(CannotHeal::Destroyed);
+        } else if target.is_at_full_health() {
+            return Err(CannotHeal::FullHealth);
+        }
+
+        let amount = amount.min(self.0.health).min(target.can_heal_amount());
+        self.0.health -= amount;
+        target.gain_health(amount);
+        Ok(())
+    }
+}
+
+pub struct Weapon {
+    object: Object,
+    attack: u32,
+}
+
+impl Weapon {
+    pub fn new(max_health: u32, attack: u32) -> Self {
+        Self {
+            object: Object::new(max_health),
+            attack,
+        }
+    }
+
+    pub fn deal_damage(&mut self, target: &mut Character) -> Result<(), CannotDamage> {
+        if !self.object.is_alive() {
+            return Err(CannotDamage::Destroyed);
+        } else if !target.is_alive() {
+            return Err(CannotDamage::DeadTarget);
+        }
+
+        self.object.health -= 1;
+        target.take_damage(self.attack);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -164,7 +257,7 @@ mod damage_and_health {
     #[test]
     fn new_character_is_alive() {
         let c = Character::new();
-        assert!(c.alive());
+        assert!(c.is_alive());
     }
 
     #[test]
@@ -173,7 +266,7 @@ mod damage_and_health {
             health: 0,
             ..Character::new()
         };
-        assert!(!c.alive());
+        assert!(!c.is_alive());
     }
 
     #[test]
@@ -194,7 +287,7 @@ mod damage_and_health {
             ..Character::new()
         };
         c.take_damage(200);
-        assert!(!c.alive());
+        assert!(!c.is_alive());
         assert_eq!(c.health, 0);
     }
 
@@ -212,7 +305,7 @@ mod damage_and_health {
     fn new_character_dies_after_max_health_damage() {
         let mut c = Character::new();
         c.take_damage(c.level.max_health());
-        assert!(!c.alive());
+        assert!(!c.is_alive());
     }
 
     #[test]
@@ -231,7 +324,7 @@ mod damage_and_health {
     fn dead_cannot_heal_self() {
         let mut c = Character::new();
         c.set_health(0);
-        assert!(!c.alive());
+        assert!(!c.is_alive());
         assert_eq!(heal(&c.clone(), &mut c, 1), Err(CannotHeal::Dead));
     }
 }
@@ -352,6 +445,7 @@ mod factions {
     #[test]
     fn can_heal_allies() {
         let (c1, mut c2) = red_pandas();
+        c2.take_damage(100);
         assert_eq!(heal(&c1, &mut c2, 10), Ok(()));
     }
 
@@ -367,5 +461,75 @@ mod factions {
         let (c1, mut c2) = red_pandas();
         c2.factions.remove("red pandas");
         assert_eq!(heal(&c1, &mut c2, 10), Err(CannotHeal::NotSelfOrAlly));
+    }
+}
+
+#[cfg(test)]
+mod magical_objects {
+    use super::*;
+
+    #[test]
+    fn magical_object_at_0_health_is_destroyed() {
+        let mut o = Object::new(100);
+        o.health = 0;
+        assert!(!o.is_alive());
+    }
+
+    #[test]
+    fn healing_potion_can_heal_character() {
+        let mut hp = HealthPotion::new(100);
+        let mut c = Character::new();
+        c.set_health(500);
+        assert!(!c.is_at_full_health());
+
+        hp.heal(&mut c, 50).expect("can heal");
+        assert_eq!(hp.0.health(), 50);
+        assert_eq!(c.health(), 550);
+    }
+
+    #[test]
+    fn healing_potion_cannot_heal_over_its_maximum() {
+        let mut hp = HealthPotion::new(100);
+        let mut c = Character::new();
+        c.set_health(500);
+        assert!(!c.is_at_full_health());
+        assert!(c.max_health() >= 700);
+
+        hp.heal(&mut c, 200).expect("can heal");
+        assert!(c.health() < 700);
+    }
+
+    #[test]
+    fn healing_potion_cannot_heal_over_targets_maximum() {
+        let mut hp = HealthPotion::new(10000);
+        let mut c = Character::new();
+        c.set_health(900);
+        assert!(!c.is_at_full_health());
+
+        hp.heal(&mut c, 9001).expect("can heal");
+        assert!(c.is_at_full_health());
+        assert!(c.health() < 9001);
+    }
+
+    #[test]
+    fn magic_weapon_deals_damage_equal_to_attack() {
+        let mut w = Weapon::new(10, 50);
+        let mut c = Character::new();
+        c.set_health(200);
+        assert_eq!(c.health(), 200);
+
+        w.deal_damage(&mut c).expect("can damage");
+        assert_eq!(c.health(), 150);
+    }
+
+    #[test]
+    fn magic_weapon_takes_one_damage_after_attack() {
+        let mut w = Weapon::new(10, 50);
+        let mut c = Character::new();
+        c.set_health(200);
+        assert_eq!(c.health(), 200);
+
+        w.deal_damage(&mut c).expect("can damage");
+        assert_eq!(w.object.health(), 9);
     }
 }
